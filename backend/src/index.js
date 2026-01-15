@@ -1,5 +1,9 @@
 const express = require('express');
 const cors = require('cors');
+const client = require('prom-client');
+const promBundle = require('express-prom-bundle');
+const expressWinston = require('express-winston');
+const winston = require('winston');
 require('dotenv').config();
 
 const userRoutes = require('./routes/userRoutes');
@@ -11,6 +15,27 @@ const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const register = client.register;
+const logger = winston.createLogger({
+  level: 'info',
+  transports: [
+    new winston.transports.Console()
+  ],
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  )
+});
+
+client.collectDefaultMetrics();
+const metricsMiddleware = promBundle({
+  includeMethod: true,
+  includePath: true,
+  includeStatusCode: true,
+  promClient: {
+    collectDefaultMetrics: false
+  }
+});
 
 // Middleware
 app.use(cors({
@@ -19,6 +44,21 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(expressWinston.logger({
+  transports: [
+    new winston.transports.Console()
+  ],
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  meta: true,
+  msg: 'HTTP {{req.method}} {{req.url}}',
+  expressFormat: false,
+  colorize: false
+}));
+app.use(metricsMiddleware);
 
 // Routes
 app.use('/api/users', userRoutes);
@@ -39,6 +79,26 @@ app.get('/health', (req, res) => {
 });
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to collect metrics' });
+  }
+});
+app.get('/api/logs/info', (req, res) => {
+  logger.info('Info log test', { route: req.path });
+  res.json({ status: 'logged', level: 'info' });
+});
+app.get('/api/logs/warn', (req, res) => {
+  logger.warn('Warn log test', { route: req.path });
+  res.json({ status: 'logged', level: 'warn' });
+});
+app.get('/api/logs/error', (req, res) => {
+  logger.error('Error log test', { route: req.path });
+  res.json({ status: 'logged', level: 'error' });
 });
 
 // Error handling middleware
